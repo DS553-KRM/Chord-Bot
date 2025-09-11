@@ -17,4 +17,4 @@ jobs:
       - name: Push to hub
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
-        run: git push https://DS553-Music-Bot:$HF_TOKEN@huggingface.co/spaces/DS553-Music-Bot/ChordBot main
+        run: git push https://rjorgec:$HF_TOKEN@huggingface.co/spaces/DS553-Music-Bot/ChordBot main
