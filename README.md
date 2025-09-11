@@ -1,21 +1,21 @@
-# ---
+---
 
-# title: "Note → Chord Chatbot"
+title: "Note → Chord Chatbot"
 
-# emoji: "🎵"
+emoji: "🎵"
 
-# colorFrom: blue
+colorFrom: blue
 
-# colorTo: purple
+colorTo: purple
 
-# sdk: gradio
+sdk: gradio
 
-# sdk\_version: "4.44.0"
+sdk\_version: "4.44.0"
 
-# app\_file: app.py
+app\_file: app.py
 
-# pinned: false
+pinned: false
 
-# ---
+---
 
 
