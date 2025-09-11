@@ -14,7 +14,15 @@ jobs:
         with:
           fetch-depth: 0
           lfs: true
-      - name: Push to hub
+
+      - name: Push to hub (with rebase)
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
-        run: git push https://rjorgec:$HF_TOKEN@huggingface.co/spaces/DS553-Music-Bot/ChordBot main
+        run: |
+          set -euo pipefail
+          HF_URL="https://rjorgec:${HF_TOKEN}@huggingface.co/spaces/DS553-Music-Bot/ChordBot"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git lfs install --local
+          git pull --rebase "$HF_URL" main || true
+          git push "$HF_URL" main
