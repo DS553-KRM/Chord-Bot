@@ -1,2 +1,2 @@
 # Chord-Bot
-say note make chord
+say note make chord. Wow!
