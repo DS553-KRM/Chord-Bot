@@ -1,0 +1,43 @@
+name: Sync to Hugging Face hub
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  sync-to-hub:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          lfs: true
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git lfs install --local
+
+      - name: Add HF remote
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          HF_URL="https://rjorgec:${HF_TOKEN}@huggingface.co/spaces/DS553-Music-Bot/ChordBot"
+          if git remote get-url hf >/dev/null 2>&1; then
+            git remote set-url hf "$HF_URL"
+          else
+            git remote add hf "$HF_URL"
+          fi
+
+      # One-time history stitch: keep *your* files, acknowledge HF history.
+      - name: Merge hf/main (prefer ours) and push
+        run: |
+          set -euo pipefail
+          if git ls-remote --exit-code --heads hf main >/dev/null 2>&1; then
+            git fetch hf main
+            # Create a merge commit that includes hf/main’s history but keeps our content
+            git merge -s ours --allow-unrelated-histories hf/main -m "CI: stitch histories (keep repo content)"
+          fi
+          # Fast-forward push; --with-lease protects against races
+          git push hf main --force-with-lease
