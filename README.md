@@ -1,21 +1,12 @@
 ---
-
-title: "Note → Chord Chatbot"
-
-emoji: "🎵"
-
-colorFrom: blue
-
-colorTo: purple
-
+title: Chord Bot Local
+emoji: 🎸
+colorFrom: indigo
+colorTo: blue
 sdk: gradio
-
-sdk\_version: "4.44.0"
-
-app\_file: app.py
-
+sdk_version: "4.44.0"
+app_file: app.py
 pinned: false
-
 ---
 
 
