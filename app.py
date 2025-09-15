@@ -6,45 +6,54 @@ generator = pipeline("text2text-generation", model="google/flan-t5-small")
 
 def chord_bot(prompt: str) -> str:
     """
-    Use FLAN-T5 with few-shot prompting to explain chord progressions in musical terms.
+    Use FLAN-T5 with few-shot prompting to identify chords given a list of notes.
     """
     chord_prompt = f"""
-    Given a group of notes, identify what chord those notes make
+You are a chord identifier. Given 3 or more notes, return the chord name.
 
-    Example:
-    Input: C E G
-    Output: This is a C major chord
+Examples:
+Input: C E G
+Output: C major
 
-    Example:
-    Input: D F# A C#
-    Output: This is a D major 7 chord.
+Input: D F# A
+Output: D major
 
-    Now explain:
-    Input: {prompt}
-    Output:
-    """
+Input: D F# A C
+Output: D7 (dominant 7)
+
+Input: C Eb G
+Output: C minor
+
+Input: C Eb G Bb
+Output: Cm7 (minor 7)
+
+Now, identify this chord:
+Input: {prompt}
+Output:
+"""
 
     # Generate explanation
     response = generator(
         chord_prompt,
-        max_new_tokens=150,
-        temperature=0.9,
+        max_new_tokens=32,
+        temperature=0.0,  # deterministic output
         top_p=0.95
     )
 
     # Post-process to clean output
     raw_text = response[0]["generated_text"]
-    answer = raw_text.split("Output:")[-1].strip()
+    if "Output:" in raw_text:
+        answer = raw_text.split("Output:")[-1].strip()
+    else:
+        answer = raw_text.strip()
     return answer
 
-# Gradio UI
-iface = gr.Interface(
+# Gradio Chat UI
+chatbot = gr.ChatInterface(
     fn=chord_bot,
-    inputs=gr.Textbox(lines=2, placeholder="Type a chord progression (e.g., C D E G)"),
-    outputs="text",
-    title="🎶 Locally-Hosted Chord Bot",
-    description="This version runs FLAN-T5 locally with few-shot prompting to explain chord progressions."
+    title="🎶 FLAN-T5 Chord Bot",
+    description="Type 3+ notes (e.g., C E G or Db F Ab C) and I'll identify the chord."
 )
 
 if __name__ == "__main__":
-    iface.launch()
+    chatbot.launch()
