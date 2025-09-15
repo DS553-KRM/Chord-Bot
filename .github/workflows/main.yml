@@ -123,32 +123,49 @@ jobs:
               print("HF check failed softly:", e)
           PY
 
-      # 6) Prepare a stub model so app import doesn't try to train
-      - name: Prepare stub model so import doesn’t train
+      # 6) Prepare stub model (verify or recreate if invalid) so import doesn't train or crash
+      - name: Prepare stub model (verify or recreate)
         run: |
           python - <<'PY'
           import os
           MODEL_PATH = "chord_classifier.pkl"
-          if not os.path.exists(MODEL_PATH):
-              # Try joblib; fall back to pickle. joblib.load can read pickle files.
+
+          def write_stub():
               try:
                   import joblib
                   class _StubModel:
-                      def predict(self, X):
-                          return ["C major"] * len(X)
+                      def predict(self, X): return ["C major"] * len(X)
                   joblib.dump(_StubModel(), MODEL_PATH)
-                  print("Wrote stub model via joblib:", MODEL_PATH)
+                  print("Wrote stub via joblib:", MODEL_PATH)
               except Exception as e:
                   print("joblib not available or failed:", e, "-- falling back to pickle")
                   import pickle
                   class _StubModel:
-                      def predict(self, X):
-                          return ["C major"] * len(X)
+                      def predict(self, X): return ["C major"] * len(X)
                   with open(MODEL_PATH, "wb") as f:
-                      pickle.dump(_StubModel(), f)
-                  print("Wrote stub model via pickle:", MODEL_PATH)
+                      # Use highest protocol for speed; joblib.load can read pickle stubs
+                      pickle.dump(_StubModel(), f, protocol=pickle.HIGHEST_PROTOCOL)
+                  print("Wrote stub via pickle:", MODEL_PATH)
+
+          def verify():
+              try:
+                  import joblib
+                  m = joblib.load(MODEL_PATH)
+                  # Exercise predict lightly to ensure object shape is usable
+                  m.predict([ [0]*12 ])
+                  return True
+              except Exception as e:
+                  print("Existing model invalid:", repr(e))
+                  return False
+
+          if os.path.exists(MODEL_PATH):
+              if not verify():
+                  print("Recreating invalid model stub…")
+                  write_stub()
+              else:
+                  print("Model file verified OK.")
           else:
-              print("Model already present:", MODEL_PATH)
+              write_stub()
           PY
 
       # 7) Spaces-like "smoke" import: import app and call a tiny function
@@ -157,7 +174,6 @@ jobs:
           python - <<'PY'
           import importlib
           m = importlib.import_module("app")
-          # Call your two-arg function with a tiny input
           out = m.chord_bot("C E G", [])
           print("Smoke output:", out)
           PY
