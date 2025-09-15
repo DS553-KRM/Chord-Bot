@@ -1,4 +1,4 @@
-# .github/workflows/ci.yml
+# .github/workflows/main.yml
 name: CI
 
 on:
@@ -123,58 +123,41 @@ jobs:
               print("HF check failed softly:", e)
           PY
 
-      # 6) Spaces-like "smoke" import: import app without launching servers/UIs
+      # 6) Prepare a stub model so app import doesn't try to train
+      - name: Prepare stub model so import doesn’t train
+        run: |
+          python - <<'PY'
+          import os
+          MODEL_PATH = "chord_classifier.pkl"
+          if not os.path.exists(MODEL_PATH):
+              # Try joblib; fall back to pickle. joblib.load can read pickle files.
+              try:
+                  import joblib
+                  class _StubModel:
+                      def predict(self, X):
+                          return ["C major"] * len(X)
+                  joblib.dump(_StubModel(), MODEL_PATH)
+                  print("Wrote stub model via joblib:", MODEL_PATH)
+              except Exception as e:
+                  print("joblib not available or failed:", e, "-- falling back to pickle")
+                  import pickle
+                  class _StubModel:
+                      def predict(self, X):
+                          return ["C major"] * len(X)
+                  with open(MODEL_PATH, "wb") as f:
+                      pickle.dump(_StubModel(), f)
+                  print("Wrote stub model via pickle:", MODEL_PATH)
+          else:
+              print("Model already present:", MODEL_PATH)
+          PY
+
+      # 7) Spaces-like "smoke" import: import app and call a tiny function
       - name: Smoke import & tiny call
         run: |
           python - <<'PY'
-          import importlib, sys, pathlib, inspect
-
-          project_root = pathlib.Path(__file__).resolve().parents[2]
-          sys.path.insert(0, str(project_root))
-          sys.path.insert(0, str(project_root / "src"))
-
-          candidates = []
-          if (project_root / "app.py").exists():
-              candidates.append("app")
-          if (project_root / "src" / "app.py").exists():
-              candidates.append("app")  # resolves to src.app with sys.path set
-          if not candidates:
-              candidates = ["app"]
-
-          last_err = None
-          module = None
-          for name in candidates:
-              try:
-                  module = importlib.import_module(name)
-                  break
-              except Exception as e:
-                  last_err = e
-
-          assert module is not None, f"Could not import app module: {last_err}"
-
-          # Look for a trivially callable function that won't start servers
-          PREFERRED = ("ping", "healthcheck", "health_check", "hello", "version", "get_version")
-          FALLBACK  = ("predict", "inference", "run", "main", "chord_bot")
-
-          def try_call(fn):
-              try:
-                  sig = inspect.signature(fn)
-                  if len(sig.parameters) == 0:
-                      fn()
-                      return True
-                  if len(sig.parameters) == 1:
-                      fn("test")
-                      return True
-              except Exception:
-                  return False
-              return False
-
-          called = False
-          for name in list(PREFERRED) + list(FALLBACK):
-              if hasattr(module, name) and callable(getattr(module, name)):
-                  if try_call(getattr(module, name)):
-                      called = True
-                      break
-
-          print("Smoke import OK. Callable executed:", called)
+          import importlib
+          m = importlib.import_module("app")
+          # Call your two-arg function with a tiny input
+          out = m.chord_bot("C E G", [])
+          print("Smoke output:", out)
           PY
