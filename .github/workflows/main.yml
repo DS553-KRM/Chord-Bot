@@ -1,43 +1,184 @@
-name: Sync to Hugging Face hub
+# .github/workflows/ci.yml
+name: CI
+
 on:
   push:
-    branches: [main]
-  workflow_dispatch:
+    branches: [ "**" ]
+  pull_request:
 
 jobs:
-  sync-to-hub:
+  unit-tests:
+    name: Unit tests (pytest on Python 3.10)
     runs-on: ubuntu-latest
+
     steps:
-      - uses: actions/checkout@v4
+      # 1) Check out repository
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      # 2) Set up Python
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v5
         with:
-          fetch-depth: 0
-          lfs: true
+          python-version: "3.10"
 
-      - name: Configure git
+      # 3) Cache pip dependencies to speed up builds
+      - name: Cache pip
+        id: cache-pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-3.10-${{ hashFiles('**/requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-3.10-
+            ${{ runner.os }}-pip-
+
+      # 4) Install project dependencies (and the package itself if present)
+      - name: Install dependencies
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git lfs install --local
+          python -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then
+            pip install -r requirements.txt
+          fi
+          # Editable install if a Python package is defined
+          if [ -f pyproject.toml ] || [ -f setup.cfg ] || [ -f setup.py ]; then
+            pip install -e .
+          fi
+          # Ensure pytest is available even if not listed
+          pip install pytest
 
-      - name: Add HF remote
+      # 5) Run tests and emit a JUnit XML report for CI visibility
+      - name: Run pytest
+        run: |
+          mkdir -p reports
+          pytest -q --maxfail=1 --disable-warnings --junitxml=reports/junit.xml
+
+      # 6) Upload the JUnit report as a build artifact
+      - name: Upload test report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: junit-report
+          path: reports/junit.xml
+
+  spaces-smoke:
+    name: Spaces-like smoke check (CPU-only import & tiny call)
+    runs-on: ubuntu-latest
+    needs: unit-tests
+
+    steps:
+      # 1) Check out repository
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      # 2) Set up Python
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      # 3) Cache pip dependencies
+      - name: Cache pip
+        id: cache-pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-3.10-${{ hashFiles('**/requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-3.10-
+            ${{ runner.os }}-pip-
+
+      # 4) Install same dependencies as Spaces CPU runtime (no GPU backends)
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then
+            pip install -r requirements.txt
+          fi
+          if [ -f pyproject.toml ] || [ -f setup.cfg ] || [ -f setup.py ]; then
+            pip install -e .
+          fi
+
+      # 5) (Optional) Use HF token if provided; skip quietly if missing
+      - name: (Optional) Check Hugging Face auth
+        if: ${{ secrets.HF_TOKEN != '' }}
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
-          HF_URL="https://rjorgec:${HF_TOKEN}@huggingface.co/spaces/DS553-Music-Bot/ChordBot"
-          if git remote get-url hf >/dev/null 2>&1; then
-            git remote set-url hf "$HF_URL"
-          else
-            git remote add hf "$HF_URL"
-          fi
+          python - <<'PY'
+          import os, sys
+          token = os.environ.get("HF_TOKEN", "")
+          try:
+              import json
+              from huggingface_hub import HfApi
+          except Exception:
+              # Install only if needed
+              import subprocess
+              subprocess.check_call([sys.executable, "-m", "pip", "install", "huggingface_hub"])
+              from huggingface_hub import HfApi
+          try:
+              who = HfApi().whoami(token=token)
+              print("HF whoami:", json.dumps(who))
+          except Exception as e:
+              # Do not fail the job if HF is unreachable or token is scoped differently
+              print("HF check skipped or failed softly:", e)
+          PY
 
-      # One-time history stitch: keep *your* files, acknowledge HF history.
-      - name: Merge hf/main (prefer ours) and push
+      # 6) Spaces-like "smoke" import: import app without launching servers/UIs
+      - name: Smoke import & tiny call
         run: |
-          set -euo pipefail
-          if git ls-remote --exit-code --heads hf main >/dev/null 2>&1; then
-            git fetch hf main
-            # Create a merge commit that includes hf/main’s history but keeps our content
-            git merge -s ours --allow-unrelated-histories hf/main -m "CI: stitch histories (keep repo content)"
-          fi
-          # Fast-forward push; --with-lease protects against races
-          git push hf main --force-with-lease
+          python - <<'PY'
+          import importlib, sys, pathlib, inspect
+
+          project_root = pathlib.Path(__file__).resolve().parents[2]
+          sys.path.insert(0, str(project_root))
+          sys.path.insert(0, str(project_root / "src"))
+
+          candidates = []
+          if (project_root / "app.py").exists():
+              candidates.append("app")
+          if (project_root / "src" / "app.py").exists():
+              candidates.append("app")  # with src already in path, this resolves to src.app
+          if not candidates:
+              # Fall back to trying a top-level "app" module anyway
+              candidates = ["app"]
+
+          last_err = None
+          module = None
+          for name in candidates:
+              try:
+                  module = importlib.import_module(name)
+                  break
+              except Exception as e:
+                  last_err = e
+
+          assert module is not None, f"Could not import app module: {last_err}"
+
+          # Look for a trivially callable function that won't start servers
+          PREFERRED = ("ping", "healthcheck", "health_check", "hello", "version", "get_version")
+          FALLBACK  = ("predict", "inference", "run", "main", "chord_bot")
+
+          def try_call(fn):
+              try:
+                  sig = inspect.signature(fn)
+                  if len(sig.parameters) == 0:
+                      fn()
+                      return True
+                  # If it takes one parameter, try a tiny string
+                  if len(sig.parameters) == 1:
+                      fn("test")
+                      return True
+              except Exception:
+                  return False
+              return False
+
+          called = False
+          for name in list(PREFERRED) + list(FALLBACK):
+              if hasattr(module, name) and callable(getattr(module, name)):
+                  if try_call(getattr(module, name)):
+                      called = True
+                      break
+
+          # It's sufficient that import worked; callable is a bonus.
+          print("Smoke import OK. Callable executed:", called)
+          PY
