@@ -4,7 +4,7 @@ from transformers import pipeline
 # Load FLAN-T5 small locally
 generator = pipeline("text2text-generation", model="google/flan-t5-small")
 
-def chord_bot(prompt: str) -> str:
+def chord_bot(message: str, history: list[tuple[str, str]]):
     """
     Use FLAN-T5 with few-shot prompting to identify chords given a list of notes.
     """
@@ -28,19 +28,19 @@ Input: C Eb G Bb
 Output: Cm7 (minor 7)
 
 Now, identify this chord:
-Input: {prompt}
+Input: {message}
 Output:
 """
 
-    # Generate explanation
+    # Generate answer
     response = generator(
         chord_prompt,
         max_new_tokens=32,
-        temperature=0.0,  # deterministic output
+        temperature=0.0,  # deterministic
         top_p=0.95
     )
 
-    # Post-process to clean output
+    # Post-process
     raw_text = response[0]["generated_text"]
     if "Output:" in raw_text:
         answer = raw_text.split("Output:")[-1].strip()
