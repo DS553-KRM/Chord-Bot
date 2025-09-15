@@ -7,9 +7,8 @@ on:
   pull_request:
     types: [opened, reopened, synchronize, closed]
   workflow_run:
+    workflows: ["CI"]   # <-- Name of the workflow to summarize (adjust as needed)
     types: [completed]
-    # NOTE: We intentionally do NOT filter by workflow name here so forks still trigger.
-    # We filter by name inside the job against env.TARGET_CI_WORKFLOW.
 
 permissions:
   contents: read
@@ -32,9 +31,8 @@ jobs:
         with:
           script: |
             const core = require('@actions/core');
-            const {context, github} = require('@actions/github');
+            const {context} = require('@actions/github');
 
-            // Guard: missing webhook
             if (!process.env.WEBHOOK_URL) {
               core.notice('DISCORD_WEBHOOK_URL not set; skipping Discord push notification.');
               return;
@@ -49,7 +47,6 @@ jobs:
             const commits = Array.isArray(pld.commits) ? pld.commits : [];
             const total = commits.length;
 
-            // Build concise commit lines (max 5)
             const limit = 5;
             const items = commits.slice(0, limit).map(c => {
               const sha = (c.id || '').substring(0,7);
@@ -67,7 +64,6 @@ jobs:
             ];
             if (items.length) {
               const commitsBlock = items.join('\n');
-              // Discord field value ≤ 1024
               const value = commitsBlock.length > 1024 ? commitsBlock.slice(0, 1021) + '…' : commitsBlock;
               fields.push({ name: `Commits (${total})`, value, inline: false });
             }
@@ -77,27 +73,17 @@ jobs:
               url: compare,
               color: colorY,
               timestamp: new Date().toISOString(),
-              author: {
-                name: repoFull,
-                url: `https://github.com/${repoFull}`
-              },
+              author: { name: repoFull, url: `https://github.com/${repoFull}` },
               fields,
-              footer: {
-                text: `after ${String(pld.after || '').substring(0,7)} • ${new Date().toISOString()}`
-              }
+              footer: { text: `after ${String(pld.after || '').substring(0,7)} • ${new Date().toISOString()}` }
             };
 
             const res = await fetch(process.env.WEBHOOK_URL, {
               method: 'POST',
               headers: {'Content-Type': 'application/json'},
-              body: JSON.stringify({
-                username: 'GitHub',
-                embeds: [embed]
-              })
+              body: JSON.stringify({ username: 'GitHub', embeds: [embed] })
             });
-            if (!res.ok) {
-              core.warning(`Discord webhook POST failed: ${res.status} ${res.statusText}`);
-            }
+            if (!res.ok) core.warning(`Discord webhook POST failed: ${res.status} ${res.statusText}`);
 
   discord_pr:
     name: Post PR Summary
@@ -127,29 +113,19 @@ jobs:
             const owner = context.repo.owner;
             const repo  = context.repo.repo;
 
-            // Enrich via REST
             const {data: prData} = await github.rest.pulls.get({owner, repo, pull_number: number});
             const {data: reviews} = await github.rest.pulls.listReviews({owner, repo, pull_number: number, per_page: 100});
             const {data: labels}  = await github.rest.issues.listLabelsOnIssue({owner, repo, issue_number: number, per_page: 100});
 
-            // Reviewers status (latest state per user)
             const latestByUser = new Map();
-            for (const r of reviews) {
-              latestByUser.set(r.user?.login || 'unknown', r.state || 'COMMENTED');
-            }
+            for (const r of reviews) latestByUser.set(r.user?.login || 'unknown', r.state || 'COMMENTED');
             const states = { APPROVED: 0, CHANGES_REQUESTED: 0, COMMENTED: 0, DISMISSED: 0 };
-            for (const s of latestByUser.values()) {
-              if (states[s] !== undefined) states[s]++; else states.COMMENTED++;
-            }
-            const reviewersLine =
-              `✅ ${states.APPROVED}  ❌ ${states.CHANGES_REQUESTED}  💬 ${states.COMMENTED}`;
+            for (const s of latestByUser.values()) states[s] !== undefined ? states[s]++ : states.COMMENTED++;
 
+            const reviewersLine = `✅ ${states.APPROVED}  ❌ ${states.CHANGES_REQUESTED}  💬 ${states.COMMENTED}`;
             const labelNames = labels.map(l => l.name).join(', ') || '—';
-
-            // Size
             const sizeLine = `+${prData.additions} / -${prData.deletions} • ${prData.changed_files} files`;
 
-            // Color per action / merge state
             let color = colorY;
             let statusText = context.payload.action;
             if (context.payload.action === 'closed') {
@@ -181,14 +157,9 @@ jobs:
               url: htmlUrl,
               color,
               timestamp: new Date().toISOString(),
-              author: {
-                name: `${owner}/${repo}`,
-                url: `https://github.com/${owner}/${repo}`
-              },
+              author: { name: `${owner}/${repo}`, url: `https://github.com/${owner}/${repo}` },
               fields,
-              footer: {
-                text: `${head}@${(prData.head?.sha || '').substring(0,7)} • ${new Date().toISOString()}`
-              }
+              footer: { text: `${head}@${(prData.head?.sha || '').substring(0,7)} • ${new Date().toISOString()}` }
             };
 
             const res = await fetch(process.env.WEBHOOK_URL, {
@@ -196,9 +167,7 @@ jobs:
               headers: {'Content-Type': 'application/json'},
               body: JSON.stringify({ username: 'GitHub', embeds: [embed] })
             });
-            if (!res.ok) {
-              core.warning(`Discord webhook POST failed: ${res.status} ${res.statusText}`);
-            }
+            if (!res.ok) core.warning(`Discord webhook POST failed: ${res.status} ${res.statusText}`);
 
   discord_ci_summary:
     name: Post CI Summary (workflow_run)
@@ -243,7 +212,6 @@ jobs:
             const owner = context.repo.owner;
             const repo  = context.repo.repo;
 
-            // Duration
             const started = new Date(wr.run_started_at || wr.created_at || wr.updated_at);
             const ended   = new Date(wr.updated_at || Date.now());
             const ms = Math.max(0, ended - started);
@@ -253,9 +221,6 @@ jobs:
             const ss = String(secs%60).padStart(2,'0');
             const duration = `${hh}:${mm}:${ss}`;
 
-            // Attempt to find JUnit totals from artifacts (best-effort).
-            // We list artifacts; if any name suggests junit/reports, we download the ZIP to /tmp/art.zip,
-            // and try to extract simple counts by grepping XML after unzip. This may fail; we handle gracefully.
             let junitSummary = '';
             try {
               const {data: artifactsList} = await github.rest.actions.listWorkflowRunArtifacts({
@@ -265,25 +230,20 @@ jobs:
                 /junit|report|test/i.test(a.name || '') && a.archive_download_url
               );
               if (cand) {
-                // Download ZIP to file via the raw URL; octokit gives us an authenticated request
                 const resp = await github.request('GET ' + cand.archive_download_url, {
                   owner, repo, headers: { accept: 'application/vnd.github+json' }
                 });
                 const fs = require('node:fs');
-                const path = require('node:path');
                 const cp = require('node:child_process');
                 const tmpZip = '/tmp/artifact.zip';
                 fs.writeFileSync(tmpZip, Buffer.from(resp.data));
-                // Try to unzip to /tmp/artifacts
                 const outDir = '/tmp/artifacts';
                 try {
                   fs.mkdirSync(outDir, {recursive: true});
                   cp.execSync(`unzip -o ${tmpZip} -d ${outDir}`, {stdio: 'ignore'});
-                  // Find first *.xml that looks like junit
                   const findXml = cp.execSync(`bash -lc "grep -ril --include='*.xml' -e '<testsuite' ${outDir} | head -n 1 || true"`).toString().trim();
                   if (findXml) {
-                    const xml = fs.readFileSync(findXml, 'utf8');
-                    // Naive parse: match tests, failures, errors, skipped at testsuite root
+                    const xml = require('node:fs').readFileSync(findXml, 'utf8');
                     const m = xml.match(/<testsuite[^>]*\btests="(\d+)"[^>]*\bfailures="(\d+)"[^>]*\berrors="(\d+)"[^>]*\bskipped="(\d+)"/i)
                            || xml.match(/<testsuite[^>]*\btests="(\d+)"[^>]*\bfailures="(\d+)"[^>]*\bskipped="(\d+)"/i);
                     if (m) {
@@ -297,13 +257,9 @@ jobs:
                       junitSummary = `tests: ${passed} ✔ / ${failedTotal} ✖ / ${skipped} ⚠`;
                     }
                   }
-                } catch (e) {
-                  // unzip/grep could fail; ignore
-                }
+                } catch (_) { /* ignore unzip/grep errors */ }
               }
-            } catch (e) {
-              // Listing/downloading artifacts failed; ignore
-            }
+            } catch (_) { /* ignore artifact listing/downloading errors */ }
 
             const fields = [
               { name: 'Repo', value: `[${owner}/${repo}](https://github.com/${owner}/${repo})`, inline: true },
@@ -315,23 +271,16 @@ jobs:
               { name: 'Commit', value: `[${(wr.head_sha||'').substring(0,7)}](https://github.com/${owner}/${repo}/commit/${wr.head_sha})`, inline: true },
               { name: 'Actor', value: wr.actor?.login || 'unknown', inline: true },
             ];
-            if (junitSummary) {
-              fields.push({ name: 'CI', value: junitSummary, inline: false });
-            }
+            if (junitSummary) fields.push({ name: 'CI', value: junitSummary, inline: false });
 
             const embed = {
               title: `CI: ${conclusion} • ${wr.name}`,
               url: wr.html_url,
               color,
               timestamp: new Date().toISOString(),
-              author: {
-                name: `${owner}/${repo}`,
-                url: `https://github.com/${owner}/${repo}/actions`
-              },
+              author: { name: `${owner}/${repo}`, url: `https://github.com/${owner}/${repo}/actions` },
               fields,
-              footer: {
-                text: `${wr.head_branch}@${(wr.head_sha||'').substring(0,7)} • ${new Date().toISOString()}`
-              }
+              footer: { text: `${wr.head_branch}@${(wr.head_sha||'').substring(0,7)} • ${new Date().toISOString()}` }
             };
 
             const res = await fetch(process.env.WEBHOOK_URL, {
@@ -339,6 +288,4 @@ jobs:
               headers: {'Content-Type': 'application/json'},
               body: JSON.stringify({ username: 'GitHub', embeds: [embed] })
             });
-            if (!res.ok) {
-              core.warning(`Discord webhook POST failed: ${res.status} ${res.statusText}`);
-            }
+            if (!res.ok) core.warning(`Discord webhook POST failed: ${res.status} ${res.statusText}`);
