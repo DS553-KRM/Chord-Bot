@@ -123,50 +123,29 @@ jobs:
               print("HF check failed softly:", e)
           PY
 
-      # 6) Prepare stub model (verify or recreate if invalid) so import doesn't train or crash
-      - name: Prepare stub model (verify or recreate)
+      # 6) Always write a picklable sklearn dummy model so app import never trains/throws
+      - name: Prepare sklearn DummyClassifier stub model
         run: |
           python - <<'PY'
-          import os, sys
+          import sys, subprocess
           try:
               import joblib
           except Exception:
-              import subprocess
               subprocess.check_call([sys.executable, "-m", "pip", "install", "joblib"])
               import joblib
+          try:
+              from sklearn.dummy import DummyClassifier
+          except Exception:
+              subprocess.check_call([sys.executable, "-m", "pip", "install", "scikit-learn"])
+              from sklearn.dummy import DummyClassifier
 
           MODEL_PATH = "chord_classifier.pkl"
 
-          # Top-level class so it's picklable
-          class StubModel:
-              def predict(self, X):
-                  return ["C major"] * len(X)
-
-          def write_stub():
-              joblib.dump(StubModel(), MODEL_PATH)
-              print("Wrote fresh stub model to", MODEL_PATH)
-
-          def verify():
-              try:
-                  m = joblib.load(MODEL_PATH)
-                  m.predict([[0]*12])  # ensure it's usable
-                  return True
-              except Exception as e:
-                  print("Existing model invalid:", repr(e))
-                  return False
-
-          if os.path.exists(MODEL_PATH):
-              if not verify():
-                  print("Recreating invalid model stub…")
-                  try:
-                      os.remove(MODEL_PATH)
-                  except Exception:
-                      pass
-                  write_stub()
-              else:
-                  print("Model file verified OK.")
-          else:
-              write_stub()
+          # Create a trivial classifier that always predicts "C major"
+          dummy = DummyClassifier(strategy="constant", constant="C major")
+          dummy.fit([[0]*12], ["C major"])
+          joblib.dump(dummy, MODEL_PATH)
+          print("Wrote sklearn DummyClassifier stub:", MODEL_PATH)
           PY
 
       # 7) Spaces-like "smoke" import: import app and call a tiny function
