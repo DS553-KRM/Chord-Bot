@@ -1,4 +1,4 @@
-# .github/workflows/main.yml
+# .github/workflows/ci.yml
 name: CI
 
 on:
@@ -127,32 +127,29 @@ jobs:
       - name: Prepare stub model (verify or recreate)
         run: |
           python - <<'PY'
-          import os
+          import os, sys
+          try:
+              import joblib
+          except Exception:
+              import subprocess
+              subprocess.check_call([sys.executable, "-m", "pip", "install", "joblib"])
+              import joblib
+
           MODEL_PATH = "chord_classifier.pkl"
 
+          # Top-level class so it's picklable
+          class StubModel:
+              def predict(self, X):
+                  return ["C major"] * len(X)
+
           def write_stub():
-              try:
-                  import joblib
-                  class _StubModel:
-                      def predict(self, X): return ["C major"] * len(X)
-                  joblib.dump(_StubModel(), MODEL_PATH)
-                  print("Wrote stub via joblib:", MODEL_PATH)
-              except Exception as e:
-                  print("joblib not available or failed:", e, "-- falling back to pickle")
-                  import pickle
-                  class _StubModel:
-                      def predict(self, X): return ["C major"] * len(X)
-                  with open(MODEL_PATH, "wb") as f:
-                      # Use highest protocol for speed; joblib.load can read pickle stubs
-                      pickle.dump(_StubModel(), f, protocol=pickle.HIGHEST_PROTOCOL)
-                  print("Wrote stub via pickle:", MODEL_PATH)
+              joblib.dump(StubModel(), MODEL_PATH)
+              print("Wrote fresh stub model to", MODEL_PATH)
 
           def verify():
               try:
-                  import joblib
                   m = joblib.load(MODEL_PATH)
-                  # Exercise predict lightly to ensure object shape is usable
-                  m.predict([ [0]*12 ])
+                  m.predict([[0]*12])  # ensure it's usable
                   return True
               except Exception as e:
                   print("Existing model invalid:", repr(e))
@@ -161,6 +158,10 @@ jobs:
           if os.path.exists(MODEL_PATH):
               if not verify():
                   print("Recreating invalid model stub…")
+                  try:
+                      os.remove(MODEL_PATH)
+                  except Exception:
+                      pass
                   write_stub()
               else:
                   print("Model file verified OK.")
