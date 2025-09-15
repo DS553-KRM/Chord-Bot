@@ -9,15 +9,15 @@ def chord_bot(prompt: str) -> str:
     Use FLAN-T5 with few-shot prompting to explain chord progressions in musical terms.
     """
     chord_prompt = f"""
-    Explain chord progressions in musical terms:
+    Given a group of notes, identify what chord those notes make
 
     Example:
-    Input: C G Am F
-    Output: This is a very common pop progression (I–V–vi–IV in C major). It creates a sense of familiarity and resolution, often used in ballads and anthems.
+    Input: C E G
+    Output: This is a C major chord
 
     Example:
-    Input: D G A
-    Output: This is a I–IV–V progression in D major, one of the most basic and powerful patterns in Western music. It creates strong tension and resolution, great for rock or folk.
+    Input: D F# A C#
+    Output: This is a D major 7 chord.
 
     Now explain:
     Input: {prompt}
