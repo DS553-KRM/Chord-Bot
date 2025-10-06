@@ -71,7 +71,7 @@ if __name__ == "__main__":
     import os
 
    host = os.getenv("GRADIO_SERVER_NAME", "0.0.0.0")
-   port = int(os.getenv("GRADIO_SERVER_PORT", "7861"))  # default to 7861
+   port = int(os.getenv("GRADIO_SERVER_PORT", "7860"))  # default to 7860
 
    chatbot.launch(server_name=host, server_port=port, share=False)
 
