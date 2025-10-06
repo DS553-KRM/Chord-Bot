@@ -1,98 +1,71 @@
 import gradio as gr
 import joblib
 import numpy as np
+import os
+import re
+import subprocess
+import sys
+import traceback
 
-# -------------------------------------
-# 🔤 Note definitions
-# -------------------------------------
-NOTE_NAMES = ["C", "C#", "D", "D#", "E", "F",
-              "F#", "G", "G#", "A", "A#", "B"]
+MODEL_PATH = "chord_classifier.pkl"
 
-# -------------------------------------
-# 🧠 Load trained model
-# -------------------------------------
-clf = joblib.load("chord_classifier.pkl")
+# --- Note parsing ---
+NAME_TO_PC = {
+    "C": 0, "C#": 1, "Db": 1, "D": 2, "D#": 3, "Eb": 3,
+    "E": 4, "F": 5, "F#": 6, "Gb": 6, "G": 7, "G#": 8,
+    "Ab": 8, "A": 9, "A#": 10, "Bb": 10, "B": 11
+}
+NOTE_TOKEN_RE = re.compile(r"[A-Ga-g](?:#|b)?")
 
-# -------------------------------------
-# 🧩 Helper functions
-# -------------------------------------
-def normalize_note(n):
-    n = n.strip().upper()
-    n = n.replace("DB", "C#").replace("EB", "D#").replace("GB", "F#").replace("AB", "G#").replace("BB", "A#")
-    return n if n in NOTE_NAMES else None
-
-def notes_to_pcs(notes):
-    pcs = [NOTE_NAMES.index(n) for n in notes if n in NOTE_NAMES]
-    return sorted(set(pcs))
-
-def notes_to_vector(pcs):
+def notes_to_vector(notes_str: str):
+    tokens = NOTE_TOKEN_RE.findall(notes_str)
+    pcs = [NAME_TO_PC.get(t.upper(), None) for t in tokens]
+    pcs = [p for p in pcs if p is not None]
     vec = np.zeros(12)
     for p in pcs:
         vec[p] = 1
     return vec
 
-def intervals_from_pcs(pcs):
-    """Compute normalized interval profile for pitch classes."""
-    n = len(pcs)
-    if n < 2:
-        return np.zeros(12)
-    intervals = [(pcs[j] - pcs[i]) % 12 for i in range(n) for j in range(i + 1, n)]
-    profile = np.zeros(12)
-    for i in intervals:
-        profile[i] += 1
-    return profile / np.max(profile)
+# --- Model handling ---
+def retrain_model():
+    """Always retrain model on startup for consistency across environments."""
+    print("🧠 Retraining chord classifier (forced rebuild)...")
+    try:
+        subprocess.run(
+            [sys.executable, "train_chord_model.py"],
+            check=True
+        )
+        print("✅ Model retrained and saved successfully.")
+    except subprocess.CalledProcessError as e:
+        print("❌ Error retraining model:", e)
+        traceback.print_exc()
+        sys.exit(1)
 
-def encode_features(pcs):
-    """Combine pitch-class vector + interval features."""
-    return np.concatenate([notes_to_vector(pcs), intervals_from_pcs(pcs)])
+def load_model():
+    # Always retrain on startup
+    retrain_model()
+    return joblib.load(MODEL_PATH)
 
-# -------------------------------------
-# 🎶 Chord prediction logic
-# -------------------------------------
-def predict_chord(notes):
-    # Clean and map to pitch classes
-    clean_notes = [normalize_note(n) for n in notes]
-    clean_notes = [n for n in clean_notes if n]
-    pcs = notes_to_pcs(clean_notes)
-    if not pcs:
-        return "⚠️ Invalid notes. Try again with something like `C E G`."
+clf = load_model()
 
-    # Identify chord quality
-    features = encode_features(pcs).reshape(1, -1)
-    proba = clf.predict_proba(features)[0]
-    chord_quality = clf.classes_[np.argmax(proba)]
-    conf = np.max(proba)
+# --- Prediction logic ---
+def chord_bot(message: str, history: list[tuple[str, str]]):
+    vec = notes_to_vector(message)
+    if np.sum(vec) < 2:
+        return "⚠️ Please enter at least 2 distinct notes (e.g., C E G)"
 
-    # Identify chord root — lowest pitch, adjusted to modulo 12
-    # (Finds the most plausible root by aligning interval pattern)
-    best_root = None
-    min_distance = float("inf")
-    for i in pcs:
-        rotated = sorted([(p - i) % 12 for p in pcs])
-        distance = np.sum(np.diff(rotated))  # measure compactness
-        if distance < min_distance:
-            min_distance = distance
-            best_root = i
+    try:
+        pred = clf.predict([vec])[0]
+        return f"🎵 Identified chord: **{pred}**"
+    except Exception as e:
+        traceback.print_exc()
+        return f"❌ Prediction error: {str(e)}"
 
-    root_note = NOTE_NAMES[best_root]
-    return f"🎵 Identified chord: {root_note} {chord_quality} (confidence: {conf:.2f})"
-
-# -------------------------------------
-# 💬 Chatbot wrapper
-# -------------------------------------
-def chord_bot(message, history):
-    notes = message.split()
-    return predict_chord(notes)
-
-# -------------------------------------
-# 🚀 Launch Gradio app
-# -------------------------------------
 chatbot = gr.ChatInterface(
     fn=chord_bot,
-    title="🎶 Local Chord Identifier",
-    description="Enter notes like `C E G` or `F A C E` to identify the chord!",
+    title="🎶 ML Chord Bot (Auto-Recovering)",
+    description="Automatically retrains model on startup to avoid pickle mismatches."
 )
 
 if __name__ == "__main__":
     chatbot.launch(server_name="0.0.0.0", server_port=7861, share=True)
-
