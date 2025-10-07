@@ -17,24 +17,39 @@ NAME_TO_PC = {
 }
 NOTE_TOKEN_RE = re.compile(r"[A-Ga-g](?:#|b)?")
 
-def notes_to_vector(notes_str: str):
+# --- Feature vector construction ---
+def build_feature_vector(notes_str: str):
+    """
+    Builds a 24-feature vector (12 note presence + 12 interval presence)
+    to match the model's training representation.
+    """
     tokens = NOTE_TOKEN_RE.findall(notes_str)
-    pcs = [NAME_TO_PC.get(t.upper(), None) for t in tokens]
+    pcs = sorted({NAME_TO_PC.get(t.upper(), None) for t in tokens if t})
     pcs = [p for p in pcs if p is not None]
-    vec = np.zeros(12)
+    if len(pcs) == 0:
+        return np.zeros(24)
+
+    # 12-note presence
+    note_vec = np.zeros(12)
     for p in pcs:
-        vec[p] = 1
-    return vec
+        note_vec[p] = 1
+
+    # 12-interval presence (root-relative distances)
+    intervals = np.zeros(12)
+    for i in range(len(pcs)):
+        for j in range(i + 1, len(pcs)):
+            diff = abs(pcs[j] - pcs[i]) % 12
+            intervals[diff] = 1
+
+    # Concatenate note and interval features
+    return np.concatenate([note_vec, intervals])
 
 # --- Model handling ---
 def retrain_model():
     """Always retrain model on startup for consistency across environments."""
-    print("🧠 Retraining chord classifier (forced rebuild)...")
+    print("Retraining chord classifier (forced rebuild)...")
     try:
-        subprocess.run(
-            [sys.executable, "train_chord_model.py"],
-            check=True
-        )
+        subprocess.run([sys.executable, "train_chord_model.py"], check=True)
         print("✅ Model retrained and saved successfully.")
     except subprocess.CalledProcessError as e:
         print("❌ Error retraining model:", e)
@@ -42,7 +57,6 @@ def retrain_model():
         sys.exit(1)
 
 def load_model():
-    # Always retrain on startup
     retrain_model()
     return joblib.load(MODEL_PATH)
 
@@ -50,10 +64,9 @@ clf = load_model()
 
 # --- Prediction logic ---
 def chord_bot(message: str, history: list[tuple[str, str]]):
-    vec = notes_to_vector(message)
-    if np.sum(vec) < 2:
+    vec = build_feature_vector(message)
+    if np.sum(vec[:12]) < 2:
         return "⚠️ Please enter at least 2 distinct notes (e.g., C E G)"
-
     try:
         pred = clf.predict([vec])[0]
         return f"🎵 Identified chord: **{pred}**"
@@ -61,17 +74,15 @@ def chord_bot(message: str, history: list[tuple[str, str]]):
         traceback.print_exc()
         return f"❌ Prediction error: {str(e)}"
 
+# --- Gradio app ---
 chatbot = gr.ChatInterface(
     fn=chord_bot,
     title="🎶 ML Chord Bot (Auto-Recovering)",
-    description="Automatically retrains model on startup to avoid pickle mismatches."
+    description="Automatically retrains model on startup and uses interval features for robust chord recognition."
 )
 
+# --- Launch ---
 if __name__ == "__main__":
-    import os
-
-   host = os.getenv("GRADIO_SERVER_NAME", "0.0.0.0")
-   port = int(os.getenv("GRADIO_SERVER_PORT", "7860"))  # default to 7860
-
-   chatbot.launch(server_name=host, server_port=port, share=True)
-
+    host = os.getenv("GRADIO_SERVER_NAME", "0.0.0.0")
+    port = int(os.getenv("GRADIO_SERVER_PORT", "7860"))
+    chatbot.launch(server_name=host, server_port=port, share=False)
