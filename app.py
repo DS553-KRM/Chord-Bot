@@ -6,6 +6,12 @@ import re
 import subprocess
 import sys
 import traceback
+from metrics import (
+    init_metrics,
+    SERVICE_NAME,
+    ACTIVE_REQUESTS,
+    instrument_chord_request,
+)
 
 MODEL_PATH = "chord_classifier.pkl"
 
