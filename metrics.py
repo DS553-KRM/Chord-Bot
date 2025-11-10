@@ -57,11 +57,6 @@ ACTIVE_REQUESTS = Gauge(
 
 
 def init_metrics(port: int = 8000, service_name: str | None = None) -> None:
-    """
-    Start the Prometheus metrics HTTP server on `port`.
-
-    Call this once at app startup (before serving requests).
-    """
     global SERVICE_NAME
 
     if service_name is not None:
@@ -73,16 +68,6 @@ def init_metrics(port: int = 8000, service_name: str | None = None) -> None:
 
 
 def instrument_chord_request(endpoint: str, note_tokens, chord_label: str | None, status: str, elapsed_seconds: float) -> None:
-    """
-    Helper you can call from your endpoint / handler *after* processing a request.
-
-    Parameters:
-        endpoint       - logical endpoint name, e.g. "analyze" or "predict"
-        note_tokens    - list of parsed notes (e.g., ["C", "E", "G"]) or None
-        chord_label    - predicted chord label (e.g., "Cmaj") or None if invalid/failed
-        status         - "success", "invalid_input", or "error"
-        elapsed_seconds - wall-clock latency for the request
-    """
 
     REQUEST_COUNT.labels(
         service=SERVICE_NAME,
