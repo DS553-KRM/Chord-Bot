@@ -17,6 +17,11 @@ NAME_TO_PC = {
 }
 NOTE_TOKEN_RE = re.compile(r"[A-Ga-g](?:#|b)?")
 
+init_metrics(
+    port=int(os.getenv("METRICS_PORT", "8000")),
+    service_name=os.getenv("SERVICE_NAME", "chord-bot-local"),
+)
+
 # --- Feature vector construction ---
 def build_feature_vector(notes_str: str):
     """
